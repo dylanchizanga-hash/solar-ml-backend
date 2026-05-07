@@ -20,10 +20,6 @@ response = requests.get(FIREBASE_URL, timeout=30)
 response.raise_for_status()
 firebase_data = response.json()
 
-if not firebase_data:
-    print("No Firebase data found.")
-    raise SystemExit
-
 rows = []
 
 for key, value in firebase_data.items():
@@ -135,14 +131,16 @@ models = {
 }
 
 results = []
-best_model_name = None
 best_model = None
-best_r2 = -999
+best_model_name = ""
+best_r2 = -999999
 
-print("\nTraining and evaluating models...")
-print("--------------------------------")
+print("\nTraining and evaluating all models...")
+print("====================================")
 
-for name, model in models.items():
+for model_name, model in models.items():
+    print(f"\nTraining: {model_name}")
+
     model.fit(X_train, y_train)
     predictions = model.predict(X_test)
 
@@ -151,32 +149,32 @@ for name, model in models.items():
     r2 = r2_score(y_test, predictions)
     mape = mean_absolute_percentage_error(y_test, predictions) * 100
 
-    results.append({
-        "Model": name,
-        "MAE": mae,
-        "MSE": mse,
-        "R2": r2,
-        "MAPE": mape,
-    })
-
-    print(f"\n{name}")
+    print(f"Model: {model_name}")
     print(f"MAE: {mae:.3f}")
     print(f"MSE: {mse:.3f}")
     print(f"R2 Score: {r2:.3f}")
     print(f"MAPE: {mape:.2f}%")
 
+    results.append({
+        "Model": model_name,
+        "MAE": round(mae, 3),
+        "MSE": round(mse, 3),
+        "R2 Score": round(r2, 3),
+        "MAPE (%)": round(mape, 2),
+    })
+
     if r2 > best_r2:
         best_r2 = r2
-        best_model_name = name
         best_model = model
+        best_model_name = model_name
 
 results_df = pd.DataFrame(results)
 
-print("\nSummary Table")
-print("-------------")
+print("\nMODEL COMPARISON TABLE")
+print("======================")
 print(results_df.to_string(index=False))
 
 joblib.dump(best_model, "model.pkl")
 
-print(f"\nBest model saved as model.pkl")
-print(f"Best model: {best_model_name}")
+print("\nBest model saved as model.pkl")
+print("Best model:", best_model_name)
