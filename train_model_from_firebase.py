@@ -4,7 +4,12 @@ import joblib
 
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.metrics import (
+    mean_absolute_error,
+    mean_squared_error,
+    r2_score,
+    mean_absolute_percentage_error,
+)
 
 # ===============================
 # FIREBASE SETTINGS
@@ -31,13 +36,12 @@ if not firebase_data:
 rows = []
 
 for key, value in firebase_data.items():
-
     if not isinstance(value, dict):
         continue
 
     timestamp = str(value.get("timestamp", ""))
 
-    # Ignore invalid timestamps
+    # Ignore invalid timestamps like 101169, 75127, etc.
     if "T" not in timestamp:
         continue
 
@@ -52,9 +56,6 @@ for key, value in firebase_data.items():
         "battery": value.get("battery", 0),
     })
 
-# ===============================
-# CREATE DATAFRAME
-# ===============================
 df = pd.DataFrame(rows)
 
 if df.empty:
@@ -89,28 +90,24 @@ for col in numeric_cols:
 df = df.dropna(subset=numeric_cols)
 
 # ===============================
-# REMOVE DUPLICATE TIMESTAMPS
+# REMOVE DUPLICATES
 # ===============================
 df = df.drop_duplicates(subset=["timestamp"])
 
 # ===============================
 # REMOVE INVALID / ZERO DATA
 # ===============================
-
-# Keep only realistic solar generation rows
 df = df[df["irradiance"] > 0]
 df = df[df["voltage"] > 0]
 df = df[df["current"] > 0]
 df = df[df["power"] > 0]
+df = df[df["battery"] > 0]
 
-# Environmental ranges
 df = df[df["temperature"] > -10]
 df = df[df["temperature"] < 80]
 
 df = df[df["humidity"] >= 0]
 df = df[df["humidity"] <= 100]
-
-df = df[df["battery"] > 0]
 
 # ===============================
 # SORT BY TIME
@@ -157,7 +154,7 @@ X_train, X_test, y_train, y_test = train_test_split(
     X,
     y,
     test_size=0.2,
-    random_state=42
+    random_state=42,
 )
 
 # ===============================
@@ -165,14 +162,13 @@ X_train, X_test, y_train, y_test = train_test_split(
 # ===============================
 model = RandomForestRegressor(
     n_estimators=100,
-    random_state=42
+    random_state=42,
 )
 
 # ===============================
 # TRAIN MODEL
 # ===============================
 print("\nTraining model...")
-
 model.fit(X_train, y_train)
 
 # ===============================
@@ -186,12 +182,14 @@ predictions = model.predict(X_test)
 mae = mean_absolute_error(y_test, predictions)
 mse = mean_squared_error(y_test, predictions)
 r2 = r2_score(y_test, predictions)
+mape = mean_absolute_percentage_error(y_test, predictions) * 100
 
 print("\nModel Evaluation")
 print("-----------------")
 print(f"MAE: {mae:.3f}")
 print(f"MSE: {mse:.3f}")
 print(f"R2 Score: {r2:.3f}")
+print(f"MAPE: {mape:.2f}%")
 
 # ===============================
 # SAVE MODEL
