@@ -5,16 +5,11 @@ const { spawn } = require("child_process");
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-app.use(
-  cors({
-    origin: "*",
-  })
-);
-
+app.use(cors({ origin: "*" }));
 app.use(express.json());
 
 const FIREBASE_URL =
- const API_BASE = "https://your-backend-name.onrender.com";
+  "https://solar-ml-system-default-rtdb.firebaseio.com/solar_readings.json";
 
 app.get("/", (req, res) => {
   res.json({
@@ -40,14 +35,13 @@ app.get("/api/power", async (req, res) => {
     }
 
     const rows = Object.values(firebaseData)
-      .filter((item) => {
-        return (
+      .filter(
+        (item) =>
           item &&
           typeof item === "object" &&
           item.timestamp &&
           String(item.timestamp).includes("T")
-        );
-      })
+      )
       .map((item) => {
         const timestamp = String(item.timestamp);
 
