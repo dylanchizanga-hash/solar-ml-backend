@@ -3,27 +3,37 @@ const cors = require("cors");
 const { spawn } = require("child_process");
 
 const app = express();
+
 const PORT = process.env.PORT || 5000;
 
-app.use(cors({ origin: "*" }));
+app.use(cors());
 app.use(express.json());
 
-const FIREBASE_URL =
-  "https://solar-ml-system-default-rtdb.firebaseio.com/solar_readings.json";
-
+// ========================================
+// ROOT ROUTE
+// ========================================
 app.get("/", (req, res) => {
   res.json({
+    success: true,
     message: "Solar ML backend is running",
+    port: PORT,
     status: "online",
   });
 });
 
+// ========================================
+// FIREBASE LIVE DATA
+// ========================================
 app.get("/api/power", async (req, res) => {
   try {
-    const response = await fetch(FIREBASE_URL);
+    const firebaseURL =
+      "https://solar-ml-system-default-rtdb.firebaseio.com/solar_readings.json";
+
+    const response = await fetch(firebaseURL);
 
     if (!response.ok) {
       return res.status(500).json({
+        success: false,
         error: "Failed to fetch Firebase data",
       });
     }
@@ -48,8 +58,17 @@ app.get("/api/power", async (req, res) => {
         return {
           timestamp,
           time: timestamp.substring(11, 16),
-          power: Number(item.power || 0),
-          solar: Number(item.power || 0),
+
+          solar:
+            item.power !== undefined
+              ? Number(item.power || 0)
+              : 0,
+
+          power:
+            item.power !== undefined
+              ? Number(item.power || 0)
+              : 0,
+
           battery: Number(item.battery || 0),
           irradiance: Number(item.irradiance || 0),
           temperature: Number(item.temperature || 0),
@@ -58,54 +77,82 @@ app.get("/api/power", async (req, res) => {
           current: Number(item.current || 0),
         };
       })
-      .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+      .sort(
+        (a, b) =>
+          new Date(a.timestamp) - new Date(b.timestamp)
+      );
 
     res.json(rows);
   } catch (error) {
-    console.error("Error in /api/power:", error);
+    console.error("Power API error:", error);
+
     res.status(500).json({
-      error: "Failed to load power data",
+      success: false,
+      error: String(error),
     });
   }
 });
 
+// ========================================
+// ML PREDICTION ROUTE
+// ========================================
 app.get("/api/predict", (req, res) => {
-  const python = spawn("python", ["predict_latest.py"], {
-    cwd: __dirname,
-  });
+  try {
+    const pythonProcess = spawn(
+      "python3",
+      ["predict_latest.py"],
+      {
+        cwd: __dirname,
+      }
+    );
 
-  let output = "";
-  let errorOutput = "";
+    let output = "";
+    let errorOutput = "";
 
-  python.stdout.on("data", (data) => {
-    output += data.toString();
-  });
+    pythonProcess.stdout.on("data", (data) => {
+      output += data.toString();
+    });
 
-  python.stderr.on("data", (data) => {
-    errorOutput += data.toString();
-  });
+    pythonProcess.stderr.on("data", (data) => {
+      errorOutput += data.toString();
+    });
 
-  python.on("close", (code) => {
-    if (code === 0) {
-      try {
-        const result = JSON.parse(output);
-        res.json(result);
-      } catch (err) {
+    pythonProcess.on("close", (code) => {
+      if (code === 0) {
+        try {
+          const result = JSON.parse(output);
+          res.json(result);
+        } catch (parseError) {
+          console.error("JSON parse error:", parseError);
+
+          res.status(500).json({
+            success: false,
+            error: "Prediction output parse failed",
+            raw_output: output,
+          });
+        }
+      } else {
+        console.error("Python process error:", errorOutput);
+
         res.status(500).json({
           success: false,
-          error: "Failed to parse prediction output",
-          raw: output,
+          error: errorOutput,
         });
       }
-    } else {
-      res.status(500).json({
-        success: false,
-        error: errorOutput,
-      });
-    }
-  });
+    });
+  } catch (err) {
+    console.error("Prediction route error:", err);
+
+    res.status(500).json({
+      success: false,
+      error: String(err),
+    });
+  }
 });
 
-app.listen(PORT, () => {
+// ========================================
+// START SERVER
+// ========================================
+app.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running on port ${PORT}`);
 });
