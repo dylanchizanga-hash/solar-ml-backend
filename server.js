@@ -3,15 +3,14 @@ const cors = require("cors");
 const { spawn } = require("child_process");
 
 const app = express();
-
 const PORT = process.env.PORT || 5000;
 
-app.use(cors());
+app.use(cors({ origin: "*" }));
 app.use(express.json());
 
-// ========================================
-// ROOT ROUTE
-// ========================================
+const FIREBASE_BASE =
+  "https://solar-ml-system-default-rtdb.firebaseio.com/solar_readings.json";
+
 app.get("/", (req, res) => {
   res.json({
     success: true,
@@ -21,13 +20,10 @@ app.get("/", (req, res) => {
   });
 });
 
-// ========================================
-// FIREBASE LIVE DATA
-// ========================================
 app.get("/api/power", async (req, res) => {
   try {
     const firebaseURL =
-      "https://solar-ml-system-default-rtdb.firebaseio.com/solar_readings.json";
+      `${FIREBASE_BASE}?orderBy="$key"&limitToLast=60`;
 
     const response = await fetch(firebaseURL);
 
@@ -58,17 +54,8 @@ app.get("/api/power", async (req, res) => {
         return {
           timestamp,
           time: timestamp.substring(11, 16),
-
-          solar:
-            item.power !== undefined
-              ? Number(item.power || 0)
-              : 0,
-
-          power:
-            item.power !== undefined
-              ? Number(item.power || 0)
-              : 0,
-
+          solar: Number(item.power || 0),
+          power: Number(item.power || 0),
           battery: Number(item.battery || 0),
           irradiance: Number(item.irradiance || 0),
           temperature: Number(item.temperature || 0),
@@ -77,15 +64,11 @@ app.get("/api/power", async (req, res) => {
           current: Number(item.current || 0),
         };
       })
-      .sort(
-        (a, b) =>
-          new Date(a.timestamp) - new Date(b.timestamp)
-      );
+      .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 
     res.json(rows);
   } catch (error) {
     console.error("Power API error:", error);
-
     res.status(500).json({
       success: false,
       error: String(error),
@@ -93,18 +76,11 @@ app.get("/api/power", async (req, res) => {
   }
 });
 
-// ========================================
-// ML PREDICTION ROUTE
-// ========================================
 app.get("/api/predict", (req, res) => {
   try {
-    const pythonProcess = spawn(
-      "python3",
-      ["predict_latest.py"],
-      {
-        cwd: __dirname,
-      }
-    );
+    const pythonProcess = spawn("python3", ["predict_latest.py"], {
+      cwd: __dirname,
+    });
 
     let output = "";
     let errorOutput = "";
@@ -120,11 +96,8 @@ app.get("/api/predict", (req, res) => {
     pythonProcess.on("close", (code) => {
       if (code === 0) {
         try {
-          const result = JSON.parse(output);
-          res.json(result);
-        } catch (parseError) {
-          console.error("JSON parse error:", parseError);
-
+          res.json(JSON.parse(output));
+        } catch {
           res.status(500).json({
             success: false,
             error: "Prediction output parse failed",
@@ -132,8 +105,6 @@ app.get("/api/predict", (req, res) => {
           });
         }
       } else {
-        console.error("Python process error:", errorOutput);
-
         res.status(500).json({
           success: false,
           error: errorOutput,
@@ -141,8 +112,6 @@ app.get("/api/predict", (req, res) => {
       }
     });
   } catch (err) {
-    console.error("Prediction route error:", err);
-
     res.status(500).json({
       success: false,
       error: String(err),
@@ -150,9 +119,6 @@ app.get("/api/predict", (req, res) => {
   }
 });
 
-// ========================================
-// START SERVER
-// ========================================
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running on port ${PORT}`);
 });
