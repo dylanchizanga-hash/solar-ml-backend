@@ -8,8 +8,65 @@ const PORT = process.env.PORT || 5000;
 app.use(cors({ origin: "*" }));
 app.use(express.json());
 
-const FIREBASE_BASE =
-  "https://solar-ml-system-default-rtdb.firebaseio.com/solar_readings.json";
+const FIREBASE_URL =
+  'https://solar-ml-system-default-rtdb.firebaseio.com/solar_readings.json?orderBy="$key"&limitToLast=80';
+
+let cachedPowerRows = [];
+let lastFirebaseFetchTime = 0;
+const FIREBASE_CACHE_MS = 8000;
+
+async function fetchLatestPowerRows() {
+  const now = Date.now();
+
+  if (cachedPowerRows.length > 0 && now - lastFirebaseFetchTime < FIREBASE_CACHE_MS) {
+    return cachedPowerRows;
+  }
+
+  const response = await fetch(FIREBASE_URL);
+
+  if (!response.ok) {
+    throw new Error("Failed to fetch Firebase data");
+  }
+
+  const firebaseData = await response.json();
+
+  if (!firebaseData) {
+    cachedPowerRows = [];
+    lastFirebaseFetchTime = now;
+    return [];
+  }
+
+  const rows = Object.values(firebaseData)
+    .filter(
+      (item) =>
+        item &&
+        typeof item === "object" &&
+        item.timestamp &&
+        String(item.timestamp).includes("T")
+    )
+    .map((item) => {
+      const timestamp = String(item.timestamp);
+
+      return {
+        timestamp,
+        time: timestamp.substring(11, 16),
+        solar: Number(item.power || 0),
+        power: Number(item.power || 0),
+        battery: Number(item.battery || 0),
+        irradiance: Number(item.irradiance || 0),
+        temperature: Number(item.temperature || 0),
+        humidity: Number(item.humidity || 0),
+        voltage: Number(item.voltage || 0),
+        current: Number(item.current || 0),
+      };
+    })
+    .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+  cachedPowerRows = rows;
+  lastFirebaseFetchTime = now;
+
+  return rows;
+}
 
 app.get("/", (req, res) => {
   res.json({
@@ -22,50 +79,7 @@ app.get("/", (req, res) => {
 
 app.get("/api/power", async (req, res) => {
   try {
-    const firebaseURL =
-      `${FIREBASE_BASE}?orderBy="$key"&limitToLast=60`;
-
-    const response = await fetch(firebaseURL);
-
-    if (!response.ok) {
-      return res.status(500).json({
-        success: false,
-        error: "Failed to fetch Firebase data",
-      });
-    }
-
-    const firebaseData = await response.json();
-
-    if (!firebaseData) {
-      return res.json([]);
-    }
-
-    const rows = Object.values(firebaseData)
-      .filter(
-        (item) =>
-          item &&
-          typeof item === "object" &&
-          item.timestamp &&
-          String(item.timestamp).includes("T")
-      )
-      .map((item) => {
-        const timestamp = String(item.timestamp);
-
-        return {
-          timestamp,
-          time: timestamp.substring(11, 16),
-          solar: Number(item.power || 0),
-          power: Number(item.power || 0),
-          battery: Number(item.battery || 0),
-          irradiance: Number(item.irradiance || 0),
-          temperature: Number(item.temperature || 0),
-          humidity: Number(item.humidity || 0),
-          voltage: Number(item.voltage || 0),
-          current: Number(item.current || 0),
-        };
-      })
-      .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-
+    const rows = await fetchLatestPowerRows();
     res.json(rows);
   } catch (error) {
     console.error("Power API error:", error);
@@ -76,14 +90,30 @@ app.get("/api/power", async (req, res) => {
   }
 });
 
-app.get("/api/predict", (req, res) => {
+app.get("/api/predict", async (req, res) => {
   try {
-    const pythonProcess = spawn("python3", ["predict_latest.py"], {
+    const rows = await fetchLatestPowerRows();
+
+    if (!rows.length) {
+      return res.status(404).json({
+        success: false,
+        error: "No valid Firebase readings found",
+      });
+    }
+
+    const latest = rows[rows.length - 1];
+
+    const pythonProcess = spawn("python3", ["predict_one.py"], {
       cwd: __dirname,
     });
 
+    const inputPayload = JSON.stringify(latest);
+
     let output = "";
     let errorOutput = "";
+
+    pythonProcess.stdin.write(inputPayload);
+    pythonProcess.stdin.end();
 
     pythonProcess.stdout.on("data", (data) => {
       output += data.toString();
@@ -112,6 +142,7 @@ app.get("/api/predict", (req, res) => {
       }
     });
   } catch (err) {
+    console.error("Prediction route error:", err);
     res.status(500).json({
       success: false,
       error: String(err),
